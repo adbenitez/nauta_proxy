@@ -27,25 +27,39 @@ def termux(cmd):
 
 
 class DBManager:
-    def __init__(self, reset=False):
+    def __init__(self):
         p = os.path.join(os.path.expanduser('~'), '.nauta_proxy.db')
         self.db = sqlite3.connect(p, check_same_thread=False)
         self.lock = threading.RLock()
         self.db.row_factory = sqlite3.Row
-        if reset:
-            self.execute('DROP TABLE stats')
         self.execute('''CREATE TABLE IF NOT EXISTS stats
                         (key TEXT PRIMARY KEY,
                          value TEXT NOT NULL)''')
+        self.execute('INSERT OR IGNORE INTO stats VALUES ("stop", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("optimize", "1")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("imap", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("smtp", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("imap_msgs", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("smtp_msgs", "0")')
 
+    def reset(self):
+        self.execute('REPLACE INTO stats VALUES ("imap", "0")')
+        self.execute('REPLACE INTO stats VALUES ("smtp", "0")')
+        self.execute('REPLACE INTO stats VALUES ("imap_msgs", "0")')
+        self.execute('REPLACE INTO stats VALUES ("smtp_msgs", "0")')
+
     def execute(self, statement, args=()):
         with self.lock, self.db:
             return self.db.execute(statement, args)
+
+    def get_stop(self):
+        r = self.db.execute('SELECT value FROM stats WHERE key="stop"')
+        return r.fetchone()[0] == "1"
+
+    def set_stop(self, val):
+        val = 1 if val else 0
+        self.execute(
+            'UPDATE stats SET value=? WHERE key="stop"', (val,))
 
     def get_optimize(self):
         r = self.db.execute('SELECT value FROM stats WHERE key="optimize"')
@@ -89,8 +103,9 @@ class DBManager:
             'UPDATE stats SET value=? WHERE key="smtp_msgs"', (val,))
 
 
-class Proxy(socketserver.ThreadingMixIn, socketserver.TCPServer):
+class Proxy(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, port, real_host, real_port, use_ssl):
         self.real_host = real_host
@@ -101,12 +116,17 @@ class Proxy(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class RequestHandler(socketserver.BaseRequestHandler):
 
+    def setup(self):
+        if self.server.db.get_stop():
+            print('Stopping {} Server...'.format(self.server.protocol))
+            self.server.server_close()
+            self.server.shutdown()
+
     def handle(self):
         real_server = (self.server.real_host, self.server.real_port)
         print('{} - {} CONNECTED. Forwarding to {}'.format(
             datetime.now(), self.client_address, real_server))
 
-        total = 0
         with socket.create_connection(real_server) as sock:
             if self.server.use_ssl:
                 context = ssl.create_default_context()
@@ -203,31 +223,55 @@ def start_proxy(proxy_port, host, port, protocol, db):
         proxy.server_close()
 
 
+def is_running():
+    try:
+        with socket.create_connection(('localhost', 8082)):
+            pass
+        with socket.create_connection(('localhost', 8081)):
+            pass
+        return True
+    except:
+        return False
+
+
 def main():
     p = argparse.ArgumentParser(description='Simple Python Proxy')
     p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal) or t (toggle)",
                    choices=['1', '0', 't'])
     p.add_argument("-r", help="reset db", action="store_true")
     p.add_argument("--stats", help="print the stats", action="store_true")
+    p.add_argument("--stop", help="stop proxy", action="store_true")
     p.add_argument("--options", help="show options (needs termux)",
                    action="store_true")
     args = p.parse_args()
+    db = DBManager()
 
     if args.options:
-        options = ['Toogle Mode', 'Reset Stats']
+        running = is_running()
+        options = ['Toogle Mode', 'Reset Stats',
+                   'Stop Proxy' if running else 'Start Proxy']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
         if res['code'] == 0:
             if res['index'] == 0:
                 args.mode = 't'
             elif res['index'] == 1:
                 args.r = True
-
-    db = DBManager(args.r)
+            elif res['index'] == 2:
+                if running:
+                    args.stop = True
 
     if args.r:
-        pass  # exit
+        db.reset()
+    elif args.stop:
+        db.set_stop(True)
+        with socket.create_connection(('localhost', 8082)):
+            pass
+        with socket.create_connection(('localhost', 8081)):
+            pass
     elif args.stats:
-        print('Mode: {}'.format('Lite' if db.get_optimize() else 'Normal'))
+        state = 'Running' if is_running() else 'Stopped'
+        mode = 'Lite' if db.get_optimize() else 'Normal'
+        print('State: {} ({})'.format(state, mode))
         print('IMAP: {:,} Bytes'.format(db.get_imap()))
         print('SMTP: {:,} Bytes'.format(db.get_smtp()))
         print('Received: {:,} msgs'.format(db.get_imap_msgs()))
@@ -238,6 +282,7 @@ def main():
         else:
             db.set_optimize(args.mode == '1')
     else:
+        db.set_stop(False)
         threading.Thread(target=start_proxy, args=(
             8081, 'smtp.nauta.cu', 25, 'SMTP', db)).start()
         threading.Thread(target=start_proxy, args=(

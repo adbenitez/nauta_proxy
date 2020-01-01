@@ -4,26 +4,32 @@ from setuptools.command.install import install
 import os
 
 
+version = '0.2.0'
+
+
 def create_shortcut():
     sh = os.path.join(os.path.expanduser('~'), '.shortcuts')
     if not os.path.exists(sh):
         os.mkdir(sh)
-    with open(os.path.join(sh, 'Nauta-Proxy'), 'w') as fd:
+    sh = os.path.join(sh, 'Nauta-Proxy')
+    with open(sh, 'w') as fd:
         fd.write('''#!/usr/bin/bash
 CMD="nauta-proxy"
 SELF="bash $0 -r"
-$CMD --stats | termux-notification -t "Nauta Proxy" -i nauta_proxy --ongoin --alert-once --action "$CMD --options; $SELF" --button2 "Options" --button2-action "$CMD --options" --button1 "Reload" --button1-action "$SELF"
+$CMD --stats | termux-notification -t "Nauta Proxy" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Options" --button2-action "$CMD --options" --button1 "Reload" --button1-action "$SELF"
 
 if [ $# == 0 ]; then
     $CMD
 fi
 ''')
+        os.system(
+            'termux-notification --ongoing -t "Nauta Proxy" -i nauta_proxy -c "Nauta Proxy {0} installed!" --action "bash {1}" --button1 "Start" --button1-action "bash {1}"'.format(version, sh))
 
 
 class InstallCommand(install):
     def run(self):
-        create_shortcut()
         install.run(self)
+        create_shortcut()
 
 
 with open('README.rst') as fd:
@@ -32,7 +38,7 @@ with open('README.rst') as fd:
 
 setup(
     name='nauta_proxy',
-    version='0.1.2',
+    version=version,
     description='A simple Python proxy for Delta Chat and Nauta email server',
     long_description=long_desc,
     long_description_content_type='text/x-rst',
