@@ -209,8 +209,7 @@ def main():
     p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal) or t (toggle)",
                    choices=['1', '0', 't'])
     p.add_argument("-r", help="reset db", action="store_true")
-    p.add_argument("--stats", help="print the stats",
-                   action="store_true")
+    p.add_argument("--stats", help="print the stats", action="store_true")
     p.add_argument("--options", help="show options (needs termux)",
                    action="store_true")
     args = p.parse_args()
