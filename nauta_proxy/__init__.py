@@ -144,9 +144,8 @@ class RequestHandler(socketserver.BaseRequestHandler):
                                 msgs = self.server.db.get_smtp_msgs()
                                 self.server.db.set_smtp_msgs(msgs+1)
 
-                        smtp_total = self.server.db.get_smtp() + received
-                        self.server.db.set_smtp(smtp_total)
-                        imap_total = self.server.db.get_imap()
+                        total = self.server.db.get_smtp() + received
+                        self.server.db.set_smtp(total)
                     else:
                         if key.data == self.client_address and self.server.db.get_optimize():
                             req = b' (FLAGS BODY.PEEK[])\r\n'
@@ -176,19 +175,13 @@ class RequestHandler(socketserver.BaseRequestHandler):
                                 msgs = self.server.db.get_imap_msgs()
                                 self.server.db.set_imap_msgs(msgs+1)
 
-                        imap_total = self.server.db.get_imap() + received
-                        self.server.db.set_imap(imap_total)
-                        smtp_total = self.server.db.get_smtp()
+                        total = self.server.db.get_imap() + received
+                        self.server.db.set_imap(total)
 
                     print(data)
                     print('{} - {:,} Bytes'.format(
                         self.server.protocol, received))
-                    print('IMAP Total: {:,} Bytes'.format(imap_total))
-                    print('SMTP Total: {:,} Bytes'.format(smtp_total))
-                    print('Received: {:,} msgs'.format(
-                        self.server.db.get_imap_msgs()))
-                    print('Sent: {:,} msgs\n'.format(
-                        self.server.db.get_smtp_msgs()))
+                    print('Total: {:,} Bytes'.format(total))
 
                     if data:
                         forward[key.fileobj].sendall(data)
