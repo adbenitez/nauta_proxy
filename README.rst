@@ -11,7 +11,8 @@ You must configure your Delta Chat application as follow:
 * SMTP port: 8081
 
 **NOTE:** This package is intended to be installed inside Termux on Android.
- 
+
+
 Instructions
 ------------
 
