@@ -120,8 +120,7 @@ class RequestHandler(socketserver.BaseRequestHandler):
                          self.client_address)
             sel.register(sock, selectors.EVENT_READ, real_server)
 
-            active = True
-            while active:
+            while True:
                 events = sel.select()
                 for key, mask in events:
                     print('\n{} - {} wrote:'.format(datetime.now(), key.data))
@@ -190,7 +189,7 @@ class RequestHandler(socketserver.BaseRequestHandler):
                             self.server.protocol))
                         forward[key.fileobj].close()
                         key.fileobj.close()
-                        active = False
+                        return
 
 
 def start_proxy(proxy_port, host, port, protocol, db):
