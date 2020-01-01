@@ -5,10 +5,9 @@ import os
 
 
 def create_shortcut():
-    home = os.path.expanduser('~')
-    sh = os.path.join(home, '.shortcuts')
+    sh = os.path.join(os.path.expanduser('~'), '.shortcuts')
     if not os.path.exists(sh):
-        sh = home
+        os.mkdir(sh)
     with open(os.path.join(sh, 'Nauta-Proxy'), 'w') as fd:
         fd.write('''#!/usr/bin/bash
 CMD="nauta-proxy"
@@ -33,7 +32,7 @@ with open('README.rst') as fd:
 
 setup(
     name='nauta_proxy',
-    version='0.1.1',
+    version='0.1.2',
     description='A simple Python proxy for Delta Chat and Nauta email server',
     long_description=long_desc,
     long_description_content_type='text/x-rst',
