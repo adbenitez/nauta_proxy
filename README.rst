@@ -18,4 +18,6 @@ Instructions
 
 1. Install Termux, Termux:API and Termux:Widget apks.
 2. Open Termux and execute: `pkg install termux-api python && pip install nauta_proxy`
-3. After that the command `nauta-proxy` will be available, and script `Nauta-Proxy` will be available in your Termux widget.
+3. After that a notificiation should be dispalyed, tap the notification or the "Start" button to run the proxy.
+   Also the command `nauta-proxy` will be available, and script `Nauta-Proxy` will be available in your Termux widget.
+4. Tap the Nauta Proxy notification or the "Options" button to see the app's menu.
