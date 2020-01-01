@@ -12,8 +12,8 @@ You must configure your Delta Chat application as follow:
 
 **NOTE:** This package is intended to be installed inside Termux on Android.
  
-Insructions
------------
+Instructions
+------------
 
 1. Install Termux, Termux:API and Termux:Widget apks.
 2. Open Termux and execute: `pkg install termux-api python && pip install nauta_proxy`
