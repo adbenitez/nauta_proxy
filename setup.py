@@ -2,9 +2,13 @@
 from setuptools import setup
 from setuptools.command.install import install
 import os
+import re
 
 
-version = '0.3.0'
+with open('nauta_proxy/__init__.py', 'rt', encoding='utf8') as fd:
+    source = fd.read()
+    author = re.search(r'__author__ = \'(.*?)\'', source, re.M).group(1)
+    version = re.search(r'__version__ = \'(.*?)\'', source, re.M).group(1)
 
 
 def create_shortcut():
@@ -47,7 +51,7 @@ setup(
     description='A simple Python proxy for Delta Chat and Nauta email server',
     long_description=long_desc,
     long_description_content_type='text/x-rst',
-    author='Asiel Díaz Benítez',
+    author=author,
     author_email='adbenitez@nauta.cu',
     url='https://github.com/adbenitez/nauta_proxy',
     packages=['nauta_proxy'],

@@ -12,6 +12,10 @@ import sqlite3
 import os
 
 
+__author__ = 'Asiel Díaz Benítez'
+__version__ = '0.3.0'
+
+
 autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
 xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
 subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
@@ -245,6 +249,8 @@ def is_running():
 
 def main():
     p = argparse.ArgumentParser(description='Simple Python Proxy')
+    p.add_argument("-v", "--version", help="show program's version number",
+                   action="version", version=__version__)
     p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal) or t (toggle)",
                    choices=['1', '0', 't'])
     p.add_argument("-r", help="reset db", action="store_true")
