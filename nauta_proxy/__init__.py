@@ -12,9 +12,11 @@ import sqlite3
 import os
 
 
-ac_header = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
+autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
+xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
+subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
 header_part = re.compile(
-    rb'\) BODY\[HEADER\.FIELDS\.NOT \(AUTOCRYPT RECEIVED RECEIVED-SPF DKIM-SIGNATURE\)\] \{([0-9]+)\}')
+    rb'\) BODY\[HEADER\.FIELDS\.NOT \(AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE\)\] \{([0-9]+)\}')
 text_part = re.compile(rb'\r\n\r\n BODY\[TEXT\] \{([0-9]+)\}\r\n')
 msg_received = re.compile(rb'\* [0-9]+ FETCH \(UID [0-9]+ FLAGS \(.*?\) BODY')
 msg_sent = re.compile(rb'250 2\.0\.0 Ok: queued as ')
@@ -145,13 +147,20 @@ class RequestHandler(socketserver.BaseRequestHandler):
                 for key, mask in events:
                     print('\n{} - {} wrote:'.format(datetime.now(), key.data))
                     data = d = key.fileobj.recv(1024*4)
-                    while d and not d.endswith(b'\r\n'):
+
+                    if self.server.protocol == 'IMAP' and key.data == real_server and msg_received.match(data):
+                        end = b'OK Fetch completed.\r\n'
+                    else:
+                        end = b'\r\n'
+                    while d and not d.endswith(end):
                         d = key.fileobj.recv(1024*4)
                         data += d
 
                     if self.server.protocol == 'SMTP':
                         if key.data == self.client_address and self.server.db.get_optimize():
-                            data = ac_header.sub(b'\r\n', data, count=1)
+                            data = autocrypt_h.sub(b'\r\n', data, count=1)
+                            data = xmailer_h.sub(b'\r\n', data, count=1)
+                            data = subject_h.sub(b'\r\n', data, count=1)
 
                         received = len(data)
 
@@ -168,7 +177,7 @@ class RequestHandler(socketserver.BaseRequestHandler):
                     else:
                         if key.data == self.client_address and self.server.db.get_optimize():
                             req = b' (FLAGS BODY.PEEK[])\r\n'
-                            sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (AUTOCRYPT RECEIVED RECEIVED-SPF DKIM-SIGNATURE)] BODY.PEEK[TEXT])\r\n'
+                            sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE)] BODY.PEEK[TEXT])\r\n'
                             if data.endswith(req) and data.find(b' UID FETCH ') != -1:
                                 data = data[:-len(req)] + sub
 
@@ -259,6 +268,8 @@ def main():
             elif res['index'] == 2:
                 if running:
                     args.stop = True
+        else:
+            args.options = False
 
     if args.r:
         db.reset()
@@ -287,3 +298,6 @@ def main():
             8081, 'smtp.nauta.cu', 25, 'SMTP', db)).start()
         threading.Thread(target=start_proxy, args=(
             8082, 'imap.nauta.cu', 143, 'IMAP', db)).start()
+
+    if args.options:
+        os.system('bash ~/.shortcuts/Nauta-Proxy -r')
