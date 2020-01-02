@@ -4,7 +4,7 @@ from setuptools.command.install import install
 import os
 
 
-version = '0.2.0'
+version = '0.3.0'
 
 
 def create_shortcut():
@@ -16,14 +16,19 @@ def create_shortcut():
         fd.write('''#!/usr/bin/bash
 CMD="nauta-proxy"
 SELF="bash $0 -r"
-$CMD --stats | termux-notification -t "Nauta Proxy" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Options" --button2-action "$CMD --options" --button1 "Reload" --button1-action "$SELF"
 
 if [ $# == 0 ]; then
-    $CMD
+    $CMD &
+    sleep 1
 fi
-''')
+
+$CMD --stats | termux-notification -t "Nauta Proxy '''+version+'''" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Options" --button2-action "$CMD --options" --button1 "Reload" --button1-action "$SELF"
+
+if [ $# == 0 ]; then
+    wait $!
+fi''')
         os.system(
-            'termux-notification --ongoing -t "Nauta Proxy" -i nauta_proxy -c "Nauta Proxy {0} installed!" --action "bash {1}" --button1 "Start" --button1-action "bash {1}"'.format(version, sh))
+            'termux-notification --ongoing -t "Nauta Proxy {0}" -i nauta_proxy -c "Nauta Proxy {0} installed!" --action "{1}" --button1 "Start" --button1-action "{1}"'.format(version, 'nauta-proxy --stop; bash {}'.format(sh)))
 
 
 class InstallCommand(install):
