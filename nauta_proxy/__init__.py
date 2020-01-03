@@ -2,18 +2,18 @@
 from datetime import datetime
 import argparse
 import json
-import threading
+import os
 import re
 import selectors
 import ssl
 import socket
 import socketserver
+import threading
 import sqlite3
-import os
 
 
 __author__ = 'Asiel Díaz Benítez'
-__version__ = '0.3.0'
+__version__ = '0.4.0'
 
 
 autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
@@ -254,12 +254,14 @@ def main():
     p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal) or t (toggle)",
                    choices=['1', '0', 't'])
     p.add_argument("-r", help="reset db", action="store_true")
+    p.add_argument("-n", help="show notification", action="store_true")
     p.add_argument("--stats", help="print the stats", action="store_true")
     p.add_argument("--stop", help="stop proxy", action="store_true")
     p.add_argument("--options", help="show options (needs termux)",
                    action="store_true")
     args = p.parse_args()
     db = DBManager()
+    cmd = 'bash ~/.shortcuts/Nauta-Proxy -r'
 
     if args.options:
         running = is_running()
@@ -279,6 +281,8 @@ def main():
 
     if args.r:
         db.reset()
+    elif args.n:
+        os.system(cmd)
     elif args.stop:
         db.set_stop(True)
         with socket.create_connection(('localhost', 8082)):
@@ -306,4 +310,4 @@ def main():
             8082, 'imap.nauta.cu', 143, 'IMAP', db)).start()
 
     if args.options:
-        os.system('bash ~/.shortcuts/Nauta-Proxy -r')
+        os.system(cmd)
