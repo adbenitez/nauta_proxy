@@ -26,13 +26,13 @@ if [ $# == 0 ]; then
     sleep 1
 fi
 
-$CMD --stats | termux-notification -t "Nauta Proxy '''+version+'''" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Options" --button2-action "$CMD --options" --button1 "Reload" --button1-action "$SELF"
+$CMD --stats | termux-notification -t "Nauta Proxy '''+version+'''" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Opciones" --button2-action "$CMD --options" --button1 "Refrescar" --button1-action "$SELF"
 
 if [ $# == 0 ]; then
     wait $!
 fi''')
         os.system(
-            'termux-notification --ongoing -t "Nauta Proxy {0}" -i nauta_proxy -c "Nauta Proxy {0} installed!" --action "{1}" --button1 "Start" --button1-action "{1}"'.format(version, 'nauta-proxy --stop; bash {}'.format(sh)))
+            'termux-notification --ongoing -t "Nauta Proxy {0}" -i nauta_proxy -c "Nauta Proxy {0} instalado!" --action "{1}" --button1 "Iniciar" --button1-action "{1}"'.format(version, 'nauta-proxy --stop; bash {}'.format(sh)))
 
 
 class InstallCommand(install):

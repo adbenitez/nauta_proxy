@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime
 import argparse
 import json
+import logging
+import logging.handlers
 import os
 import re
 import selectors
-import ssl
 import socket
 import socketserver
 import threading
@@ -41,6 +41,7 @@ class DBManager:
         self.execute('''CREATE TABLE IF NOT EXISTS stats
                         (key TEXT PRIMARY KEY,
                          value TEXT NOT NULL)''')
+        self.execute('INSERT OR IGNORE INTO stats VALUES ("savelog", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("stop", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("optimize", "1")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("imap", "0")')
@@ -57,6 +58,15 @@ class DBManager:
     def execute(self, statement, args=()):
         with self.lock, self.db:
             return self.db.execute(statement, args)
+
+    def get_savelog(self):
+        r = self.db.execute('SELECT value FROM stats WHERE key="savelog"')
+        return r.fetchone()[0] == "1"
+
+    def set_savelog(self, val):
+        val = 1 if val else 0
+        self.execute(
+            'UPDATE stats SET value=? WHERE key="savelog"', (val,))
 
     def get_stop(self):
         r = self.db.execute('SELECT value FROM stats WHERE key="stop"')
@@ -113,10 +123,9 @@ class Proxy(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, port, real_host, real_port, use_ssl):
+    def __init__(self, port, real_host, real_port):
         self.real_host = real_host
         self.real_port = real_port
-        self.use_ssl = use_ssl
         super().__init__(('', port), RequestHandler)
 
 
@@ -124,21 +133,24 @@ class RequestHandler(socketserver.BaseRequestHandler):
 
     def setup(self):
         if self.server.db.get_stop():
-            print('Stopping {} Server...'.format(self.server.protocol))
+            self.server.logger.debug('Stopping Server...')
             self.server.server_close()
             self.server.shutdown()
 
     def handle(self):
+        try:
+            self._handle()
+        except Exception as ex:
+            self.server.logger.exception(ex)
+        finally:
+            self.server.logger.debug('CLOSING CONNECTION.')
+            self.request.close()
+
+    def _handle(self):
         real_server = (self.server.real_host, self.server.real_port)
-        print('{} - {} CONNECTED. Forwarding to {}'.format(
-            datetime.now(), self.client_address, real_server))
+        self.server.logger.debug('%s CONNECTED', self.client_address)
 
         with socket.create_connection(real_server) as sock:
-            if self.server.use_ssl:
-                context = ssl.create_default_context()
-                sock = context.wrap_socket(
-                    sock, server_hostname=real_server[0])
-
             forward = {self.request: sock, sock: self.request}
 
             sel = selectors.DefaultSelector()
@@ -149,7 +161,7 @@ class RequestHandler(socketserver.BaseRequestHandler):
             while True:
                 events = sel.select()
                 for key, mask in events:
-                    print('\n{} - {} wrote:'.format(datetime.now(), key.data))
+                    self.server.logger.debug('%s writing...', key.data)
                     data = d = key.fileobj.recv(1024*4)
 
                     if self.server.protocol == 'IMAP' and key.data == real_server and msg_received.match(data):
@@ -203,34 +215,55 @@ class RequestHandler(socketserver.BaseRequestHandler):
                                             b') BODY[] {%i}' % (
                                                 size,) + data[m1.end():]
                                     except Exception as ex:
-                                        print("ERROR:", ex)
+                                        self.server.logger.exception(ex)
                                 msgs = self.server.db.get_imap_msgs()
                                 self.server.db.set_imap_msgs(msgs+1)
 
                         total = self.server.db.get_imap() + received
                         self.server.db.set_imap(total)
 
-                    print(data)
-                    print('{} - {:,} Bytes'.format(
-                        self.server.protocol, received))
-                    print('Total: {:,} Bytes'.format(total))
+                    received = '{:,} Bytes'.format(received)
+                    total = 'Total: {:,} Bytes'.format(total)
+                    self.server.logger.debug('%s wrote:\n%s\n%s\n%s',
+                                             key.data, data, received, total)
 
                     if data:
                         forward[key.fileobj].sendall(data)
                     else:
-                        print('\n{} - CLOSING CONNECTION.\n\n'.format(
-                            self.server.protocol))
-                        forward[key.fileobj].close()
-                        key.fileobj.close()
                         return
 
 
+def init_logger(protocol, save):
+    logger = logging.Logger(protocol)
+    logger.parent = None
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(message)s')
+    chandler = logging.StreamHandler()
+    chandler.setLevel(logging.DEBUG)
+    chandler.setFormatter(formatter)
+    logger.addHandler(chandler)
+
+    if save:
+        formatter = logging.Formatter(
+            '%(asctime)s - %(message)s')
+        log_path = os.path.join(os.path.expanduser('~'), protocol+'.log')
+        fhandler = logging.handlers.RotatingFileHandler(
+            log_path, backupCount=2, maxBytes=10000000)
+        fhandler.setLevel(logging.DEBUG)
+        fhandler.setFormatter(formatter)
+        logger.addHandler(fhandler)
+
+    return logger
+
+
 def start_proxy(proxy_port, host, port, protocol, db):
-    print('{} Proxy Started'.format(protocol))
+    proxy = Proxy(proxy_port, host, port, False)
+    proxy.protocol = protocol
+    proxy.db = db
+    proxy.logger = init_logger(protocol, db.get_savelog())
+    proxy.logger.debug('Proxy Started')
     try:
-        proxy = Proxy(proxy_port, host, port, False)
-        proxy.protocol = protocol
-        proxy.db = db
         proxy.serve_forever()
     finally:
         proxy.server_close()
@@ -251,8 +284,10 @@ def main():
     p = argparse.ArgumentParser(description='Simple Python Proxy')
     p.add_argument("-v", "--version", help="show program's version number",
                    action="version", version=__version__)
-    p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal) or t (toggle)",
-                   choices=['1', '0', 't'])
+    p.add_argument("--mode", help="set proxy mode: 1 (optimize),  0 (normal)",
+                   choices=['1', '0'])
+    p.add_argument("--log", help="1 (save logs) or 0 (don't save logs)",
+                   choices=['1', '0'])
     p.add_argument("-r", help="reset db", action="store_true")
     p.add_argument("-n", help="show notification", action="store_true")
     p.add_argument("--stats", help="print the stats", action="store_true")
@@ -264,16 +299,30 @@ def main():
     cmd = 'bash ~/.shortcuts/Nauta-Proxy -r'
 
     if args.options:
+        optimize = db.get_optimize()
         running = is_running()
-        options = ['Toogle Mode', 'Reset Stats',
-                   'Stop Proxy' if running else 'Start Proxy']
+        options = ['Modo Normal' if optimize else 'Modo Lite',
+                   'Mostrar Stats',
+                   'Resetear Stats',
+                   'Detener Proxy' if running else 'Iniciar Proxy']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
         if res['code'] == 0:
             if res['index'] == 0:
-                args.mode = 't'
+                args.mode = '0' if optimize else '1'
             elif res['index'] == 1:
-                args.r = True
+                state = 'En Ejecución' if is_running() else 'Detenido'
+                mode = 'Lite' if db.get_optimize() else 'Normal'
+                text = 'Estado: {} ({})\n'.format(state, mode)
+                text += 'Recibido: {:,}msg / {:,}B\n'.format(
+                    db.get_imap_msgs(), db.get_imap())
+                text += 'Enviado: {:,}msg / {:,}B\n'.format(
+                    db.get_smtp_msgs(), db.get_smtp())
+                title = 'Nauta Proxy {}'.format(__version__)
+                termux('termux-dialog confirm -t "{}" -i "{}"'.format(
+                    title, text))
             elif res['index'] == 2:
+                args.r = True
+            elif res['index'] == 3:
                 if running:
                     args.stop = True
         else:
@@ -290,18 +339,17 @@ def main():
         with socket.create_connection(('localhost', 8081)):
             pass
     elif args.stats:
-        state = 'Running' if is_running() else 'Stopped'
+        state = 'En Ejecución' if is_running() else 'Detenido'
         mode = 'Lite' if db.get_optimize() else 'Normal'
-        print('State: {} ({})'.format(state, mode))
-        print('IMAP: {:,} Bytes'.format(db.get_imap()))
-        print('SMTP: {:,} Bytes'.format(db.get_smtp()))
-        print('Received: {:,} msgs'.format(db.get_imap_msgs()))
-        print('Sent: {:,} msgs\n'.format(db.get_smtp_msgs()))
+        print('Estado: {} ({})'.format(state, mode))
+        print('Recibido: {:,} / {:,}B'.format(
+            db.get_imap_msgs(), db.get_imap()))
+        print(
+            'Enviado: {:,} / {:,}B'.format(db.get_smtp_msgs(), db.get_smtp()))
     elif args.mode is not None:
-        if args.mode == 't':
-            db.set_optimize(not db.get_optimize())
-        else:
-            db.set_optimize(args.mode == '1')
+        db.set_optimize(args.mode == '1')
+    elif args.log is not None:
+        db.set_savelog(args.log == '1')
     else:
         db.set_stop(False)
         threading.Thread(target=start_proxy, args=(
