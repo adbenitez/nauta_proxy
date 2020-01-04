@@ -258,7 +258,7 @@ def init_logger(protocol, save):
 
 
 def start_proxy(proxy_port, host, port, protocol, db):
-    proxy = Proxy(proxy_port, host, port, False)
+    proxy = Proxy(proxy_port, host, port)
     proxy.protocol = protocol
     proxy.db = db
     proxy.logger = init_logger(protocol, db.get_savelog())
