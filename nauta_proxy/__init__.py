@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import argparse
+import imaplib
 import json
 import logging
 import logging.handlers
@@ -9,11 +10,12 @@ import selectors
 import socket
 import socketserver
 import threading
+import time
 import sqlite3
 
 
 __author__ = 'Asiel Díaz Benítez'
-__version__ = '0.4.0'
+__version__ = '0.5.0'
 
 
 autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
@@ -24,6 +26,7 @@ header_part = re.compile(
 text_part = re.compile(rb'\r\n\r\n BODY\[TEXT\] \{([0-9]+)\}\r\n')
 msg_received = re.compile(rb'\* [0-9]+ FETCH \(UID [0-9]+ FLAGS \(.*?\) BODY')
 msg_sent = re.compile(rb'250 2\.0\.0 Ok: queued as ')
+login_cmd = re.compile(rb'[a-zA-Z0-9]+ LOGIN "(.+?)" "(.+?)"\r\n')
 
 
 def termux(cmd):
@@ -41,6 +44,9 @@ class DBManager:
         self.execute('''CREATE TABLE IF NOT EXISTS stats
                         (key TEXT PRIMARY KEY,
                          value TEXT NOT NULL)''')
+        self.execute(
+            'INSERT OR IGNORE INTO stats VALUES ("serverstats", "0 0")')
+        self.execute('INSERT OR IGNORE INTO stats VALUES ("credentials", "")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("savelog", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("stop", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("optimize", "1")')
@@ -58,6 +64,24 @@ class DBManager:
     def execute(self, statement, args=()):
         with self.lock, self.db:
             return self.db.execute(statement, args)
+
+    def get_serverstats(self):
+        r = self.db.execute('SELECT value FROM stats WHERE key="serverstats"')
+        return tuple(int(i) for i in r.fetchone()[0].split())
+
+    def set_serverstats(self, val):
+        val = '{} {}'.format(*val)
+        self.execute(
+            'UPDATE stats SET value=? WHERE key="serverstats"', (val,))
+
+    def get_credentials(self):
+        r = self.db.execute('SELECT value FROM stats WHERE key="credentials"')
+        return r.fetchone()[0].split(' ', maxsplit=1)
+
+    def set_credentials(self, val):
+        val = ' '.join(map(lambda v: v.decode(), val))
+        self.execute(
+            'UPDATE stats SET value=? WHERE key="credentials"', (val,))
 
     def get_savelog(self):
         r = self.db.execute('SELECT value FROM stats WHERE key="savelog"')
@@ -190,12 +214,17 @@ class RequestHandler(socketserver.BaseRequestHandler):
 
                         total = self.server.db.get_smtp() + received
                         self.server.db.set_smtp(total)
-                    else:
-                        if key.data == self.client_address and self.server.db.get_optimize():
-                            req = b' (FLAGS BODY.PEEK[])\r\n'
-                            sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE)] BODY.PEEK[TEXT])\r\n'
-                            if data.endswith(req) and data.find(b' UID FETCH ') != -1:
-                                data = data[:-len(req)] + sub
+                    else:  # self.server.protocol == 'IMAP'
+                        if key.data == self.client_address:
+                            if self.server.db.get_optimize():
+                                req = b' (FLAGS BODY.PEEK[])\r\n'
+                                sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE)] BODY.PEEK[TEXT])\r\n'
+                                if data.endswith(req) and data.find(b' UID FETCH ') != -1:
+                                    data = data[:-len(req)] + sub
+
+                            m = login_cmd.match(data)
+                            if m:
+                                self.server.db.set_credentials(m.group(1, 2))
 
                         received = len(data)
 
@@ -271,13 +300,48 @@ def start_proxy(proxy_port, host, port, protocol, db):
 
 def is_running():
     try:
-        with socket.create_connection(('localhost', 8082)):
-            pass
         with socket.create_connection(('localhost', 8081)):
             pass
         return True
     except:
         return False
+
+
+def convert_bytes(amount):
+    if amount < 1024:
+        amount = '{}B'.format(amount)
+    elif amount < 1024**2:
+        amount = '{:.3f}KB'.format(amount/1024)
+    else:
+        amount = '{:.3f}MB'.format(amount/1024**2)
+    return amount
+
+
+def get_stats(db):
+    state = 'En Ejecución' if is_running() else 'Detenido'
+    mode = 'Lite' if db.get_optimize() else 'Normal'
+    text = 'Estado: {} ({})\n'.format(state, mode)
+    text += 'Recibido: {:,} / {}\n'.format(
+        db.get_imap_msgs(), convert_bytes(db.get_imap()))
+    text += 'Enviado: {:,} / {}\n'.format(
+        db.get_smtp_msgs(), convert_bytes(db.get_smtp()))
+    serv_msgs, serv_bytes = db.get_serverstats()
+    text += 'Servidor: {:,} / {}\n'.format(
+        serv_msgs, convert_bytes(serv_bytes))
+    return text
+
+
+def update_serverstats(db):
+    try:
+        c = db.get_credentials()
+        if c:
+            with imaplib.IMAP4('127.0.0.1', 8082) as imap:
+                imap.login(*c)
+                quota = imap.getquotaroot('INBOX')
+            quota = quota[1][1][0].split(b'(')[1][:-1].split()
+            db.set_serverstats((int(quota[-2]), int(quota[1])))
+    except Exception as ex:
+        print('ERROR:', ex)
 
 
 def main():
@@ -288,6 +352,8 @@ def main():
                    choices=['1', '0'])
     p.add_argument("--log", help="1 (save logs) or 0 (don't save logs)",
                    choices=['1', '0'])
+    p.add_argument("--serverstats", help="update server stats",
+                   action="store_true")
     p.add_argument("-r", help="reset db", action="store_true")
     p.add_argument("-n", help="show notification", action="store_true")
     p.add_argument("--stats", help="print the stats", action="store_true")
@@ -302,29 +368,22 @@ def main():
         optimize = db.get_optimize()
         running = is_running()
         options = ['Modo Normal' if optimize else 'Modo Lite',
-                   'Mostrar Stats',
                    'Resetear Stats',
-                   'Detener Proxy' if running else 'Iniciar Proxy']
+                   'Detener Proxy' if running else 'Iniciar Proxy',
+                   'Mostrar Stats']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
         if res['code'] == 0:
             if res['index'] == 0:
                 args.mode = '0' if optimize else '1'
             elif res['index'] == 1:
-                state = 'En Ejecución' if is_running() else 'Detenido'
-                mode = 'Lite' if db.get_optimize() else 'Normal'
-                text = 'Estado: {} ({})\n'.format(state, mode)
-                text += 'Recibido: {:,}msg / {:,}B\n'.format(
-                    db.get_imap_msgs(), db.get_imap())
-                text += 'Enviado: {:,}msg / {:,}B\n'.format(
-                    db.get_smtp_msgs(), db.get_smtp())
-                title = 'Nauta Proxy {}'.format(__version__)
-                termux('termux-dialog confirm -t "{}" -i "{}"'.format(
-                    title, text))
-            elif res['index'] == 2:
                 args.r = True
-            elif res['index'] == 3:
+            elif res['index'] == 2:
                 if running:
                     args.stop = True
+            elif res['index'] == 3:
+                update_serverstats(db)
+                termux('termux-dialog confirm -t "{}" -i "{}"'.format(
+                    'Nauta Proxy {}'.format(__version__), get_stats(db)))
         else:
             args.options = False
 
@@ -339,13 +398,9 @@ def main():
         with socket.create_connection(('localhost', 8081)):
             pass
     elif args.stats:
-        state = 'En Ejecución' if is_running() else 'Detenido'
-        mode = 'Lite' if db.get_optimize() else 'Normal'
-        print('Estado: {} ({})'.format(state, mode))
-        print('Recibido: {:,} / {:,}B'.format(
-            db.get_imap_msgs(), db.get_imap()))
-        print(
-            'Enviado: {:,} / {:,}B'.format(db.get_smtp_msgs(), db.get_smtp()))
+        print(get_stats(db))
+    elif args.serverstats:
+        update_serverstats(db)
     elif args.mode is not None:
         db.set_optimize(args.mode == '1')
     elif args.log is not None:
