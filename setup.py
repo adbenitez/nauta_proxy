@@ -32,7 +32,7 @@ if [ $# == 0 ]; then
     wait $!
 fi''')
         os.system(
-            'termux-notification --ongoing -t "Nauta Proxy {0}" -i nauta_proxy -c "Nauta Proxy {0} instalado!" --action "{1}" --button1 "Iniciar" --button1-action "{1}"'.format(version, 'nauta-proxy --stop; bash {}'.format(sh)))
+            'termux-notification --ongoing -t "Nauta Proxy {0}" -i nauta_proxy -c "Nauta Proxy {0} Instalado!\nPara iniciar el proxy ejecuta en Termux:\nnauta-proxy --stop; nauta-proxy" --action "{1}" --button1 "Aceptar" --button1-action "{1}"'.format(version, 'nauta-proxy --stop; nauta-proxy -n'))
 
 
 class InstallCommand(install):

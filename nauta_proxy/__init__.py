@@ -15,18 +15,7 @@ import sqlite3
 
 
 __author__ = 'Asiel Díaz Benítez'
-__version__ = '0.5.0'
-
-
-autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
-xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
-subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
-header_part = re.compile(
-    rb'\) BODY\[HEADER\.FIELDS\.NOT \(AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE\)\] \{([0-9]+)\}')
-text_part = re.compile(rb'\r\n\r\n BODY\[TEXT\] \{([0-9]+)\}\r\n')
-msg_received = re.compile(rb'\* [0-9]+ FETCH \(UID [0-9]+ FLAGS \(.*?\) BODY')
-msg_sent = re.compile(rb'250 2\.0\.0 Ok: queued as ')
-login_cmd = re.compile(rb'[a-zA-Z0-9]+ LOGIN "(.+?)" "(.+?)"\r\n')
+__version__ = '0.6.0'
 
 
 def termux(cmd):
@@ -44,6 +33,9 @@ class DBManager:
         self.execute('''CREATE TABLE IF NOT EXISTS stats
                         (key TEXT PRIMARY KEY,
                          value TEXT NOT NULL)''')
+        self.execute('INSERT OR IGNORE INTO stats VALUES ("db_version", "1")')
+        self.execute(
+            'INSERT OR IGNORE INTO stats VALUES ("ignored_headers", "AUTOCRYPT RETURN-PATH RECEIVED RECEIVED-SPF DKIM-SIGNATURE")')
         self.execute(
             'INSERT OR IGNORE INTO stats VALUES ("serverstats", "0 0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("credentials", "")')
@@ -55,6 +47,12 @@ class DBManager:
         self.execute('INSERT OR IGNORE INTO stats VALUES ("imap_msgs", "0")')
         self.execute('INSERT OR IGNORE INTO stats VALUES ("smtp_msgs", "0")')
 
+        h = self.get_ignoredheaders().encode()
+        self.header_part = re.compile(
+            rb'\) BODY\[HEADER\.FIELDS\.NOT \(' + h + rb'\)\] \{([0-9]+)\}')
+        self.fetch_sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (' + \
+            h + b')] BODY.PEEK[TEXT])\r\n'
+
     def reset(self):
         self.execute('REPLACE INTO stats VALUES ("imap", "0")')
         self.execute('REPLACE INTO stats VALUES ("smtp", "0")')
@@ -64,6 +62,15 @@ class DBManager:
     def execute(self, statement, args=()):
         with self.lock, self.db:
             return self.db.execute(statement, args)
+
+    def get_ignoredheaders(self):
+        r = self.db.execute(
+            'SELECT value FROM stats WHERE key="ignored_headers"')
+        return r.fetchone()[0]
+
+    def set_ignoredheaders(self, val):
+        self.execute(
+            'UPDATE stats SET value=? WHERE key="ignored_headers"', (val,))
 
     def get_serverstats(self):
         r = self.db.execute('SELECT value FROM stats WHERE key="serverstats"')
@@ -147,133 +154,39 @@ class Proxy(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, port, real_host, real_port):
-        self.real_host = real_host
-        self.real_port = real_port
-        super().__init__(('', port), RequestHandler)
+    def __init__(self, port, handler, db):
+        self.db = db
+        self.loggerC, self.loggerF = self._init_loggers(handler.protocol)
 
+        super().__init__(('', port), handler)
 
-class RequestHandler(socketserver.BaseRequestHandler):
+    def exception(self, ex):
+        self.loggerC.exception(ex)
+        if self.db.get_savelog():
+            self.loggerF.exception(ex)
 
-    def setup(self):
-        if self.server.db.get_stop():
-            self.server.logger.debug('Stopping Server...')
-            self.server.server_close()
-            self.server.shutdown()
+    def log(self, msg):
+        self.loggerC.debug(msg)
+        if self.db.get_savelog():
+            self.loggerF.debug(msg)
 
-    def handle(self):
-        try:
-            self._handle()
-        except Exception as ex:
-            self.server.logger.exception(ex)
-        finally:
-            self.server.logger.debug('CLOSING CONNECTION.')
-            self.request.close()
+    def debug(self, msg):
+        if self.db.get_savelog():
+            self.loggerC.debug(msg)
+            self.loggerF.debug(msg)
 
-    def _handle(self):
-        real_server = (self.server.real_host, self.server.real_port)
-        self.server.logger.debug('%s CONNECTED', self.client_address)
+    def _init_loggers(self, protocol):
+        loggerC = logging.Logger(protocol)
+        loggerC.parent = None
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(message)s')
+        chandler = logging.StreamHandler()
+        chandler.setLevel(logging.DEBUG)
+        chandler.setFormatter(formatter)
+        loggerC.addHandler(chandler)
 
-        with socket.create_connection(real_server) as sock:
-            forward = {self.request: sock, sock: self.request}
-
-            sel = selectors.DefaultSelector()
-            sel.register(self.request, selectors.EVENT_READ,
-                         self.client_address)
-            sel.register(sock, selectors.EVENT_READ, real_server)
-
-            while True:
-                events = sel.select()
-                for key, mask in events:
-                    self.server.logger.debug('%s writing...', key.data)
-                    data = d = key.fileobj.recv(1024*4)
-
-                    if self.server.protocol == 'IMAP' and key.data == real_server and msg_received.match(data):
-                        end = b'OK Fetch completed.\r\n'
-                    else:
-                        end = b'\r\n'
-                    while d and not d.endswith(end):
-                        d = key.fileobj.recv(1024*4)
-                        data += d
-
-                    if self.server.protocol == 'SMTP':
-                        if key.data == self.client_address and self.server.db.get_optimize():
-                            data = autocrypt_h.sub(b'\r\n', data, count=1)
-                            data = xmailer_h.sub(b'\r\n', data, count=1)
-                            data = subject_h.sub(b'\r\n', data, count=1)
-
-                        received = len(data)
-
-                        if key.data == real_server:
-                            if data.startswith(b'250-smtp.nauta.cu\r\n'):
-                                data = data.replace(
-                                    b'\r\n250-STARTTLS\r\n', b'\r\n')
-                            elif msg_sent.match(data):
-                                msgs = self.server.db.get_smtp_msgs()
-                                self.server.db.set_smtp_msgs(msgs+1)
-
-                        total = self.server.db.get_smtp() + received
-                        self.server.db.set_smtp(total)
-                    else:  # self.server.protocol == 'IMAP'
-                        if key.data == self.client_address:
-                            if self.server.db.get_optimize():
-                                req = b' (FLAGS BODY.PEEK[])\r\n'
-                                sub = b' (FLAGS BODY.PEEK[HEADER.FIELDS.NOT (AUTOCRYPT X-MAILER RETURN-PATH DELIVERED-TO RECEIVED RECEIVED-SPF DKIM-SIGNATURE)] BODY.PEEK[TEXT])\r\n'
-                                if data.endswith(req) and data.find(b' UID FETCH ') != -1:
-                                    data = data[:-len(req)] + sub
-
-                            m = login_cmd.match(data)
-                            if m:
-                                self.server.db.set_credentials(m.group(1, 2))
-
-                        received = len(data)
-
-                        if key.data == real_server:
-                            if data.startswith(b'* OK [CAPABILITY '):
-                                data = data.replace(b'STARTTLS', b'')
-                            elif msg_received.match(data):
-                                if self.server.db.get_optimize():
-                                    try:
-                                        m1 = header_part.search(data)
-                                        size = int(m1[1])
-                                        m2 = text_part.search(data)
-                                        size += int(m2[1])
-                                        data = data[:m2.start()] + \
-                                            b'\r\n\r\n' + data[m2.end():]
-                                        data = data[:m1.start()] + \
-                                            b') BODY[] {%i}' % (
-                                                size,) + data[m1.end():]
-                                    except Exception as ex:
-                                        self.server.logger.exception(ex)
-                                msgs = self.server.db.get_imap_msgs()
-                                self.server.db.set_imap_msgs(msgs+1)
-
-                        total = self.server.db.get_imap() + received
-                        self.server.db.set_imap(total)
-
-                    received = '{:,} Bytes'.format(received)
-                    total = 'Total: {:,} Bytes'.format(total)
-                    self.server.logger.debug('%s wrote:\n%s\n%s\n%s',
-                                             key.data, data, received, total)
-
-                    if data:
-                        forward[key.fileobj].sendall(data)
-                    else:
-                        return
-
-
-def init_logger(protocol, save):
-    logger = logging.Logger(protocol)
-    logger.parent = None
-
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(message)s')
-    chandler = logging.StreamHandler()
-    chandler.setLevel(logging.DEBUG)
-    chandler.setFormatter(formatter)
-    logger.addHandler(chandler)
-
-    if save:
+        loggerF = logging.Logger(protocol)
+        loggerF.parent = None
         formatter = logging.Formatter(
             '%(asctime)s - %(message)s')
         log_path = os.path.join(os.path.expanduser('~'), protocol+'.log')
@@ -281,17 +194,197 @@ def init_logger(protocol, save):
             log_path, backupCount=2, maxBytes=10000000)
         fhandler.setLevel(logging.DEBUG)
         fhandler.setFormatter(formatter)
-        logger.addHandler(fhandler)
+        loggerF.addHandler(fhandler)
 
-    return logger
+        return (loggerC, loggerF)
 
 
-def start_proxy(proxy_port, host, port, protocol, db):
-    proxy = Proxy(proxy_port, host, port)
-    proxy.protocol = protocol
-    proxy.db = db
-    proxy.logger = init_logger(protocol, db.get_savelog())
-    proxy.logger.debug('Proxy Started')
+class RequestHandler(socketserver.BaseRequestHandler):
+
+    def setup(self):
+        if self.server.db.get_stop():
+            self.server.log('Stopping Server...')
+            self.server.server_close()
+            self.server.shutdown()
+
+    def handle(self):
+        self.server.log('{} CONNECTED'.format(self.client_address))
+        sel = selectors.DefaultSelector()
+        sel.register(self.request, selectors.EVENT_READ, self.client_address)
+        try:
+            with socket.create_connection(self.real_server) as sock:
+                forward = {self.request: sock, sock: self.request}
+                sel.register(sock, selectors.EVENT_READ, self.real_server)
+                self._handle(self.server.db, self.server.log, sel, forward)
+        except Exception as ex:
+            self.server.exception(ex)
+            time.sleep(30)
+        finally:
+            self.server.log('CLOSING CONNECTION.')
+
+    def _handle(self, db, log, sel, forward):
+        pass
+
+
+class SmtpHandler(RequestHandler):
+    protocol = 'SMTP'
+    real_server = ('smtp.nauta.cu', 25)
+
+    autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
+    xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
+    subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
+    references_h = re.compile(rb'\r\nReferences: (.|\n)+?\r\n(?!\t)')
+    inreplyto_h = re.compile(rb'\r\nIn-Reply-To: .+?\r\n')
+    # messageid_h = re.compile(rb'\r\nMessage-ID: .+?\r\n')
+    to_h = re.compile(rb'\r\nTo: ((.|\n)+?\r\n)(?!\t)')
+    contenttype_h = re.compile(rb'Content-Type: .+?\r\n')
+    addr_field = re.compile(rb'[^,]*?<([^<>]+)>')
+    msg_sent = re.compile(rb'250 2\.0\.0 Ok: queued as ')
+
+    def _handle(self, db, log, sel, forward):
+        while True:
+            events = sel.select()
+            for key, mask in events:
+                data = d = key.fileobj.recv(1024*4)
+                if key.data == self.real_server:
+                    while d and not data.endswith(b'\r\n'):
+                        d = key.fileobj.recv(1024*4)
+                        data += d
+
+                    if data.startswith(b'250-smtp.nauta.cu\r\n'):
+                        data = data.replace(
+                            b'\r\n250-STARTTLS\r\n', b'\r\n')
+                    elif self.msg_sent.match(data):
+                        msgs = db.get_smtp_msgs()
+                        db.set_smtp_msgs(msgs+1)
+                else:  # key.data == self.client_address
+                    if self.contenttype_h.search(data):
+                        end = b'\r\n.\r\n'
+                    else:
+                        end = b'\r\n'
+                    while d and not data.endswith(end):
+                        d = key.fileobj.recv(1024*4)
+                        data += d
+
+                    if db.get_optimize():
+                        data = self.autocrypt_h.sub(b'\r\n', data, count=1)
+                        data = self.xmailer_h.sub(b'\r\n', data, count=1)
+                        data = self.subject_h.sub(b'\r\n', data, count=1)
+                        data = self.references_h.sub(b'\r\n', data, count=1)
+                        data = self.inreplyto_h.sub(b'\r\n', data, count=1)
+                        # data = self.messageid_h.sub(b'\r\n', data, count=1)
+
+                        m = self.to_h.search(data)
+                        if m:
+                            to = b'\r\nTo: '
+                            to += b', \r\n\t'.join(self.addr_field.sub(
+                                rb'\1', m[1]).split(b','))
+                            data = data[:m.start()] + to + \
+                                data[m.end():]
+
+                    if data == b'QUIT\r\n':
+                        self.request.sendall(b'2.0.0 Bye\r\n')
+                        self.request.close()
+
+                received = len(data)
+                total = db.get_smtp() + received
+                db.set_smtp(total)
+
+                received = '{:,} Bytes'.format(received)
+                total = '{} Total: {:,} Bytes'.format(
+                    self.protocol, total)
+                if db.get_savelog():
+                    log('{} wrote:\n{}\n{}\n{}'.format(
+                        key.data, data, received, total))
+                else:
+                    log('{} wrote:\n{}\n{}'.format(
+                        key.data, received, total))
+
+                forward[key.fileobj].sendall(data)
+                if not data:
+                    self.request.close()
+                    return
+
+
+class ImapHandler(RequestHandler):
+    protocol = 'IMAP'
+    real_server = ('imap.nauta.cu', 143)
+
+    text_part = re.compile(rb'\r\n\r\n BODY\[TEXT\] \{([0-9]+)\}\r\n')
+    msg_received = re.compile(
+        rb'\* [0-9]+ FETCH \(UID [0-9]+ FLAGS \(.*?\) BODY')
+    login_cmd = re.compile(rb'[a-zA-Z0-9]+ LOGIN "(.+?)" "(.+?)"\r\n')
+
+    def _handle(self, db, log, sel, forward):
+        while True:
+            events = sel.select()
+            for key, mask in events:
+                # self.server.loggerC.debug('{} writing...'.format(key.data))
+                data = d = key.fileobj.recv(1024*4)
+                if key.data == self.real_server:
+                    if self.msg_received.match(data):
+                        end = b'OK Fetch completed.\r\n'
+                    else:
+                        end = b'\r\n'
+                    while d and not data.endswith(end):
+                        d = key.fileobj.recv(1024*4)
+                        data += d
+
+                    if data.startswith(b'* OK [CAPABILITY '):
+                        data = data.replace(b'STARTTLS', b'')
+                    elif self.msg_received.match(data):
+                        if db.get_optimize():
+                            try:
+                                m1 = db.header_part.search(data)
+                                size = int(m1[1])
+                                m2 = self.text_part.search(data)
+                                size += int(m2[1])
+                                data = data[:m2.start()] + \
+                                    b'\r\n\r\n' + data[m2.end():]
+                                data = data[:m1.start()] + \
+                                    b') BODY[] {%i}' % (
+                                        size,) + data[m1.end():]
+                            except Exception as ex:
+                                self.server.exception(ex)
+                        msgs = db.get_imap_msgs()
+                        db.set_imap_msgs(msgs+1)
+                else:  # key.data == self.client_address
+                    while d and not data.endswith(b'\r\n'):
+                        d = key.fileobj.recv(1024*4)
+                        data += d
+
+                    if db.get_optimize():
+                        req = b' (FLAGS BODY.PEEK[])\r\n'
+                        if data.endswith(req) and data.find(b' UID FETCH ') != -1:
+                            data = data[:-len(req)] + db.fetch_sub
+
+                    m = self.login_cmd.match(data)
+                    if m:
+                        db.set_credentials(m.group(1, 2))
+
+                received = len(data)
+                total = db.get_imap() + received
+                db.set_imap(total)
+
+                received = '{:,} Bytes'.format(received)
+                total = '{} Total: {:,} Bytes'.format(
+                    self.protocol, total)
+                if db.get_savelog():
+                    log('{} wrote:\n{}\n{}\n{}'.format(
+                        key.data, data, received, total))
+                else:
+                    log('{} wrote:\n{}\n{}'.format(
+                        key.data, received, total))
+
+                forward[key.fileobj].sendall(data)
+                if not data:
+                    self.request.close()
+                    return
+
+
+def start_proxy(proxy_port, handler, db):
+    proxy = Proxy(proxy_port, handler, db)
+    proxy.log('Proxy Started')
     try:
         proxy.serve_forever()
     finally:
@@ -300,7 +393,7 @@ def start_proxy(proxy_port, host, port, protocol, db):
 
 def is_running():
     try:
-        with socket.create_connection(('localhost', 8081)):
+        with socket.create_connection(('127.0.0.1', 8081)):
             pass
         return True
     except:
@@ -331,17 +424,28 @@ def get_stats(db):
     return text
 
 
+def empty_dc(db, folder):
+    c = db.get_credentials()
+    if c:
+        with imaplib.IMAP4('127.0.0.1', 8082) as imap:
+            imap.login(*c)
+            resp = imap.select(folder)
+            assert resp[0] == 'OK', resp[1]
+            imap.store('1:*', '+FLAGS.SILENT', r'\Deleted')
+            imap.close()
+            quota = imap.getquotaroot('INBOX')
+        quota = quota[1][1][0].split(b'(')[1][:-1].split()
+        db.set_serverstats((int(quota[-2]), int(quota[1])))
+
+
 def update_serverstats(db):
-    try:
-        c = db.get_credentials()
-        if c:
-            with imaplib.IMAP4('127.0.0.1', 8082) as imap:
-                imap.login(*c)
-                quota = imap.getquotaroot('INBOX')
-            quota = quota[1][1][0].split(b'(')[1][:-1].split()
-            db.set_serverstats((int(quota[-2]), int(quota[1])))
-    except Exception as ex:
-        print('ERROR:', ex)
+    c = db.get_credentials()
+    if c:
+        with imaplib.IMAP4('127.0.0.1', 8082) as imap:
+            imap.login(*c)
+            quota = imap.getquotaroot('INBOX')
+        quota = quota[1][1][0].split(b'(')[1][:-1].split()
+        db.set_serverstats((int(quota[-2]), int(quota[1])))
 
 
 def main():
@@ -354,6 +458,10 @@ def main():
                    choices=['1', '0'])
     p.add_argument("--serverstats", help="update server stats",
                    action="store_true")
+    p.add_argument("--empty", help="empty INBOX/DeltaChat folder or the given folder",
+                   const="INBOX/DeltaChat", nargs='?')
+    p.add_argument("--notheaders", help="set headers to ignore, or print the current ignored headers if no argument is given",
+                   const="", nargs='?')
     p.add_argument("-r", help="reset db", action="store_true")
     p.add_argument("-n", help="show notification", action="store_true")
     p.add_argument("--stats", help="print the stats", action="store_true")
@@ -366,21 +474,23 @@ def main():
 
     if args.options:
         optimize = db.get_optimize()
-        running = is_running()
-        options = ['Modo Normal' if optimize else 'Modo Lite',
-                   'Resetear Stats',
-                   'Detener Proxy' if running else 'Iniciar Proxy',
-                   'Mostrar Stats']
+        options = [
+            'Detener Proxy',
+            'Resetear Stats',
+            'Vaciar Carpeta DeltaChat',
+            'Modo Normal' if optimize else 'Modo Lite',
+            'Mostrar Stats']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
         if res['code'] == 0:
             if res['index'] == 0:
-                args.mode = '0' if optimize else '1'
+                args.stop = True
             elif res['index'] == 1:
                 args.r = True
             elif res['index'] == 2:
-                if running:
-                    args.stop = True
+                args.empty = 'INBOX/DeltaChat'
             elif res['index'] == 3:
+                args.mode = '0' if optimize else '1'
+            elif res['index'] == 4:
                 update_serverstats(db)
                 termux('termux-dialog confirm -t "{}" -i "{}"'.format(
                     'Nauta Proxy {}'.format(__version__), get_stats(db)))
@@ -393,14 +503,25 @@ def main():
         os.system(cmd)
     elif args.stop:
         db.set_stop(True)
-        with socket.create_connection(('localhost', 8082)):
+        with socket.create_connection(('127.0.0.1', 8082)):
             pass
-        with socket.create_connection(('localhost', 8081)):
+        with socket.create_connection(('127.0.0.1', 8081)):
             pass
     elif args.stats:
         print(get_stats(db))
     elif args.serverstats:
         update_serverstats(db)
+    elif args.empty:
+        empty_dc(db, args.empty)
+    elif args.notheaders is not None:
+        if args.notheaders:
+            args.notheaders = args.notheaders.upper()
+            if args.notheaders.startswith('+'):
+                args.notheaders = '{} {}'.format(
+                    db.get_ignoredheaders(), args.notheaders[1:])
+                db.set_ignoredheaders(args.notheaders)
+        else:
+            print(db.get_ignoredheaders())
     elif args.mode is not None:
         db.set_optimize(args.mode == '1')
     elif args.log is not None:
@@ -408,9 +529,9 @@ def main():
     else:
         db.set_stop(False)
         threading.Thread(target=start_proxy, args=(
-            8081, 'smtp.nauta.cu', 25, 'SMTP', db)).start()
+            8081, SmtpHandler, db)).start()
         threading.Thread(target=start_proxy, args=(
-            8082, 'imap.nauta.cu', 143, 'IMAP', db)).start()
+            8082, ImapHandler, db)).start()
 
     if args.options:
         os.system(cmd)
