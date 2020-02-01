@@ -324,15 +324,9 @@ class ImapHandler(RequestHandler):
                 if key.data == self.real_server:
                     if self.msg_received.match(data):
                         end = b'OK Fetch completed.\r\n'
-                    else:
-                        end = b'\r\n'
-                    while d and not data.endswith(end):
-                        d = key.fileobj.recv(1024*4)
-                        data += d
-
-                    if data.startswith(b'* OK [CAPABILITY '):
-                        data = data.replace(b'STARTTLS', b'')
-                    elif self.msg_received.match(data):
+                        while d and not data.endswith(end):
+                            d = key.fileobj.recv(1024*4)
+                            data += d
                         if db.get_optimize():
                             try:
                                 m1 = db.header_part.search(data)
@@ -348,6 +342,12 @@ class ImapHandler(RequestHandler):
                                 self.server.exception(ex)
                         msgs = db.get_imap_msgs()
                         db.set_imap_msgs(msgs+1)
+                    else:
+                        while d and not data.endswith(b'\r\n'):
+                            d = key.fileobj.recv(1024*4)
+                            data += d
+                        if data.startswith(b'* OK [CAPABILITY '):
+                            data = data.replace(b'STARTTLS', b'')
                 else:  # key.data == self.client_address
                     while d and not data.endswith(b'\r\n'):
                         d = key.fileobj.recv(1024*4)
