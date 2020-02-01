@@ -333,7 +333,12 @@ class ImapHandler(RequestHandler):
                                 size = int(m1[1])
                                 m2 = self.text_part.search(data)
                                 size += int(m2[1])
-                                data = data[:m2.start()] + \
+                                chat_v = b'\r\nChat-Version: 1.0'
+                                if data.find(chat_v) == -1:
+                                    size += len(chat_v)
+                                else:
+                                    chat_v = b''
+                                data = data[:m2.start()] + chat_v + \
                                     b'\r\n\r\n' + data[m2.end():]
                                 data = data[:m1.start()] + \
                                     b') BODY[] {%i}' % (
