@@ -17,6 +17,9 @@ import sqlite3
 __author__ = 'Asiel Díaz Benítez'
 __version__ = '0.7.0'
 
+IMAP_SERVER = ('imap.nauta.cu', 143)
+SMTP_SERVER = ('smtp.nauta.cu', 25)
+
 
 def termux(cmd):
     resp = os.popen(cmd).read()
@@ -228,7 +231,7 @@ class RequestHandler(socketserver.BaseRequestHandler):
 
 class SmtpHandler(RequestHandler):
     protocol = 'SMTP'
-    real_server = ('smtp.nauta.cu', 25)
+    real_server = SMTP_SERVER
 
     autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
     xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
@@ -305,7 +308,7 @@ class SmtpHandler(RequestHandler):
 
 class ImapHandler(RequestHandler):
     protocol = 'IMAP'
-    real_server = ('imap.nauta.cu', 143)
+    real_server = IMAP_SERVER
 
     text_part = re.compile(rb'\r\n\r\n BODY\[TEXT\] \{([0-9]+)\}\r\n')
     msg_received = re.compile(
@@ -424,7 +427,7 @@ def get_stats(db):
 def empty_dc(db, folder):
     c = db.get_credentials()
     if c:
-        with imaplib.IMAP4('127.0.0.1', 8082) as imap:
+        with imaplib.IMAP4(*IMAP_SERVER) as imap:
             imap.login(*c)
             resp = imap.select(folder)
             assert resp[0] == 'OK', resp[1]
@@ -438,7 +441,7 @@ def empty_dc(db, folder):
 def update_serverstats(db):
     c = db.get_credentials()
     if c:
-        with imaplib.IMAP4('127.0.0.1', 8082) as imap:
+        with imaplib.IMAP4(*IMAP_SERVER) as imap:
             imap.login(*c)
             quota = imap.getquotaroot('INBOX')
         quota = quota[1][1][0].split(b'(')[1][:-1].split()
