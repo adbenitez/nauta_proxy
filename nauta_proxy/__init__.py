@@ -336,9 +336,11 @@ class ImapHandler(RequestHandler):
                                 chat_v = b'\r\nChat-Version: 1.0'
                                 if data.find(chat_v) == -1:
                                     size += len(chat_v)
-                                    data[:m2.start()] = data[:m2.start()].replace(
-                                        b'\r\nList-Id:', b'\r\nxxxxxxx:', count=1).replace(
-                                            b'\r\nPrecedence:', b'\r\nxxxxxxxxxx:', count=1)
+                                    headers = data[:m2.start()].replace(
+                                        b'\r\nList-Id:', b'\r\nxxxxxxx:', count=1)
+                                    headers = headers.replace(
+                                        b'\r\nPrecedence:', b'\r\nxxxxxxxxxx:', count=1)
+                                    data = headers + data[m2.start():]
                                 else:
                                     chat_v = b''
                                 data = data[:m2.start()] + chat_v + \
