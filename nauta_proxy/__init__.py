@@ -473,8 +473,8 @@ def main():
         optimize = db.get_optimize()
         options = [
             'Detener Proxy',
+            'Vaciar Carpeta...',
             'Resetear Stats',
-            'Vaciar Carpeta DeltaChat',
             'Modo Normal' if optimize else 'Modo Lite',
             'Mostrar Stats']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
@@ -482,9 +482,19 @@ def main():
             if res['index'] == 0:
                 args.stop = True
             elif res['index'] == 1:
-                args.r = True
+                options = [
+                    'INBOX',
+                    'INBOX/DeltaChat',
+                    'DeltaChat',
+                    'Trash',
+                    'Sent',
+                    'Drafts']
+                res = termux(
+                    'termux-dialog sheet -v "{}"'.format(','.join(options)))
+                if res['code'] == 0:
+                    args.empty = options[res['index']]
             elif res['index'] == 2:
-                args.empty = 'INBOX/DeltaChat'
+                args.r = True
             elif res['index'] == 3:
                 args.mode = '0' if optimize else '1'
             elif res['index'] == 4:
