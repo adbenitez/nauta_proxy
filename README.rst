@@ -10,7 +10,7 @@ You must configure your Delta Chat application as follow:
 * SMTP server: 127.0.0.1
 * SMTP port: 8081
 
-**NOTE:** This package is intended to be installed inside Termux on Android.
+**NOTE:** This package is intended to be installed inside Termux on Android, but the command line features should work in a PC.
 
 
 Instructions
@@ -21,3 +21,4 @@ Instructions
 3. After that a notificiation should be dispalyed, tap the notification or the "Start" button to run the proxy.
    Also the command `nauta-proxy` will be available, and script `Nauta-Proxy` will be available in your Termux widget.
 4. Tap the Nauta Proxy notification or the "Options" button to see the app's menu.
+5. To upgrade run the command: `pip install -U nauta_proxy`
