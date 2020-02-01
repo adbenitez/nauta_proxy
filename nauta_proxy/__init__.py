@@ -258,15 +258,12 @@ class SmtpHandler(RequestHandler):
                         msgs = db.get_smtp_msgs()
                         db.set_smtp_msgs(msgs+1)
                 else:  # key.data == self.client_address
-                    if self.contenttype_h.search(data):
-                        end = b'\r\n.\r\n'
-                    else:
-                        end = b'\r\n'
-                    while d and not data.endswith(end):
-                        d = key.fileobj.recv(1024*4)
-                        data += d
-
                     if db.get_optimize():
+                        if self.contenttype_h.search(data):
+                            end = b'\r\n.\r\n'
+                            while d and not data.endswith(end) and len(data) < 1024*4:
+                                d = key.fileobj.recv(1024*4)
+                                data += d
                         data = self.autocrypt_h.sub(b'\r\n', data, count=1)
                         data = self.xmailer_h.sub(b'\r\n', data, count=1)
                         data = self.subject_h.sub(b'\r\n', data, count=1)
