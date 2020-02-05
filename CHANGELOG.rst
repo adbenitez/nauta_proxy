@@ -1,6 +1,13 @@
 Nauta Proxy
 ***********
 
+
+0.7.1
+-----
+
+- fix bug when receiving classic emails. `ffe0318`_
+
+
 0.7.0
 -----
 
