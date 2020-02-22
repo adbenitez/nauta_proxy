@@ -15,7 +15,7 @@ import sqlite3
 
 
 __author__ = 'Asiel Díaz Benítez'
-__version__ = '0.7.1'
+__version__ = '0.8.0'
 
 IMAP_SERVER = ('imap.nauta.cu', 143)
 SMTP_SERVER = ('smtp.nauta.cu', 25)
