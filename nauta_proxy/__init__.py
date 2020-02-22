@@ -265,7 +265,7 @@ class SmtpHandler(RequestHandler):
                         if self.contenttype_h.search(data):
                             end = b'\r\n.\r\n'
                             while d and not data.endswith(end) and len(data) < 1024*4:
-                                d = key.fileobj.recv(1024*4)
+                                d = key.fileobj.recv(1024)
                                 data += d
                         data = self.autocrypt_h.sub(b'\r\n', data, count=1)
                         data = self.xmailer_h.sub(b'\r\n', data, count=1)
@@ -333,17 +333,7 @@ class ImapHandler(RequestHandler):
                                 size = int(m1[1])
                                 m2 = self.text_part.search(data)
                                 size += int(m2[1])
-                                chat_v = b'\r\nChat-Version: 1.0'
-                                if data.find(chat_v) == -1:
-                                    size += len(chat_v)
-                                    headers = data[:m2.start()].replace(
-                                        b'\r\nList-Id:', b'\r\nxxxxxxx:', 1)
-                                    headers = headers.replace(
-                                        b'\r\nPrecedence:', b'\r\nxxxxxxxxxx:', 1)
-                                    data = headers + data[m2.start():]
-                                else:
-                                    chat_v = b''
-                                data = data[:m2.start()] + chat_v + \
+                                data = data[:m2.start()] + \
                                     b'\r\n\r\n' + data[m2.end():]
                                 data = data[:m1.start()] + \
                                     b') BODY[] {%i}' % (
