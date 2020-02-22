@@ -1,6 +1,12 @@
 Nauta Proxy
 ***********
 
+0.8.0
+-----
+
+- **Chat-Version** header is not added to classic emails anymore
+- mailing lists are not displayed anymore
+
 
 0.7.1
 -----
