@@ -4,6 +4,7 @@ import imaplib
 import json
 import os
 import socket
+import subprocess
 import threading
 
 from .database import DBManager
@@ -96,6 +97,8 @@ def main():
                    choices=['1', '0'])
     p.add_argument("--serverstats", help="update server stats",
                    action="store_true")
+    p.add_argument("--upgrade", help="check for updates of nauta proxy",
+                   action="store_true")
     p.add_argument("--empty", help="empty INBOX/DeltaChat folder or the given folder",
                    const="INBOX/DeltaChat", nargs='?')
     p.add_argument("--notheaders", help="set headers to ignore, or print the current ignored headers if no argument is given",
@@ -117,7 +120,8 @@ def main():
             'Vaciar Carpeta...',
             'Resetear Stats',
             'Modo Normal' if optimize else 'Modo Lite',
-            'Mostrar Stats']
+            'Mostrar Stats',
+            'Actualizar App']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
         if res['code'] == 0:
             if res['index'] == 0:
@@ -142,6 +146,8 @@ def main():
                 update_serverstats(db)
                 termux('termux-dialog confirm -t "{}" -i "{}"'.format(
                     'Nauta Proxy {}'.format(__version__), get_stats(db)))
+            elif res['index'] == 5:
+                args.upgrade = True
         else:
             args.options = False
 
@@ -174,6 +180,8 @@ def main():
         db.set_optimize(args.mode == '1')
     elif args.log is not None:
         db.set_savelog(args.log == '1')
+    elif args.upgrade:
+        subprocess.run(('pip', 'install', '-U', 'nauta-proxy'))
     else:
         db.set_stop(False)
         threading.Thread(target=start_proxy, args=(
