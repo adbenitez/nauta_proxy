@@ -108,7 +108,7 @@ class SmtpHandler(RequestHandler):
         while True:
             events = sel.select()
             for key, mask in events:
-                data = d = key.fileobj.recv(1024*2)
+                data = d = key.fileobj.recv(1024)
                 if key.data == self.real_server:
                     while d and not data.endswith(b'\r\n'):
                         d = key.fileobj.recv(1024)
