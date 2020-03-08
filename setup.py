@@ -26,7 +26,7 @@ if [ $# == 0 ]; then
     sleep 1
 fi
 
-$CMD --stats | termux-notification -t "Nauta Proxy '''+version+'''" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Opciones" --button2-action "$CMD --options" --button1 "Refrescar" --button1-action "$CMD --serverstats; $SELF"
+$CMD --stats | termux-notification -t "Nauta Proxy '''+version+'''" -i nauta_proxy --alert-once --ongoing --action "$SELF; $CMD --options" --button2 "Opciones" --button2-action "$CMD --options" --button1 "Refrescar" --button1-action "$SELF; $CMD --serverstats; $SELF"
 
 if [ $# == 0 ]; then
     wait $!
