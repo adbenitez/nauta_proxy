@@ -142,9 +142,9 @@ class SmtpHandler(RequestHandler):
                                 data = data[:m.start()] + to + \
                                     data[m.end():]
 
-                    if data == b'QUIT\r\n':
-                        self.request.sendall(b'2.0.0 Bye\r\n')
-                        self.request.close()
+                    # if data == b'QUIT\r\n':
+                    #     self.request.sendall(b'2.0.0 Bye\r\n')
+                    #     self.request.close()
 
                 received = len(data)
                 total = db.get_smtp() + received
