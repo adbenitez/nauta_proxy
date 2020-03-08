@@ -93,7 +93,7 @@ class SmtpHandler(RequestHandler):
     protocol = 'SMTP'
     real_server = SMTP_SERVER
 
-    autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?=\r\n')
+    autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?\r\n(?!\t)')
     xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
     subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
     references_h = re.compile(rb'\r\nReferences: (.|\n)+?\r\n(?!\t)')
