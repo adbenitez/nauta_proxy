@@ -94,13 +94,13 @@ class SmtpHandler(RequestHandler):
     real_server = SMTP_SERVER
 
     autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?\r\n(?!\t)')
-    xmailer_h = re.compile(rb'\r\nX-Mailer: .+?\r\n')
-    subject_h = re.compile(rb'\r\nSubject: .+?\r\n')
+    xmailer_h = re.compile(rb'\r\nX-Mailer: (.|\n)+?\r\n(?!\t)')
+    subject_h = re.compile(rb'\r\nSubject: (.|\n)+?\r\n(?!\t)')
     references_h = re.compile(rb'\r\nReferences: (.|\n)+?\r\n(?!\t)')
-    inreplyto_h = re.compile(rb'\r\nIn-Reply-To: .+?\r\n')
-    # messageid_h = re.compile(rb'\r\nMessage-ID: .+?\r\n')
+    inreplyto_h = re.compile(rb'\r\nIn-Reply-To: (.|\n)+?\r\n(?!\t)')
+    # messageid_h = re.compile(rb'\r\nMessage-ID: (.|\n)+?\r\n(?!\t)')
+    contenttype_h = re.compile(rb'Content-Type: (.|\n)+?\r\n(?!\t)')
     to_h = re.compile(rb'\r\nTo: ((.|\n)+?\r\n)(?!\t)')
-    contenttype_h = re.compile(rb'Content-Type: .+?\r\n')
     addr_field = re.compile(rb'[^,]*?<([^<>]+)>')
     msg_sent = re.compile(rb'250 2\.0\.0 Ok: queued as ')
 
