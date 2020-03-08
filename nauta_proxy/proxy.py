@@ -108,10 +108,10 @@ class SmtpHandler(RequestHandler):
         while True:
             events = sel.select()
             for key, mask in events:
-                data = d = key.fileobj.recv(1024*4)
+                data = d = key.fileobj.recv(1024*2)
                 if key.data == self.real_server:
                     while d and not data.endswith(b'\r\n'):
-                        d = key.fileobj.recv(1024*4)
+                        d = key.fileobj.recv(1024)
                         data += d
 
                     if data.startswith(b'250-smtp.nauta.cu\r\n'):
@@ -122,25 +122,25 @@ class SmtpHandler(RequestHandler):
                         db.set_smtp_msgs(msgs+1)
                 else:  # key.data == self.client_address
                     if db.get_optimize():
-                        if self.contenttype_h.search(data):
+                        if self.contenttype_h.search(data):  # Outgoing message
                             end = b'\r\n.\r\n'
                             while d and not data.endswith(end) and len(data) < 1024*4:
                                 d = key.fileobj.recv(1024)
                                 data += d
-                        data = self.autocrypt_h.sub(b'\r\n', data, count=1)
-                        data = self.xmailer_h.sub(b'\r\n', data, count=1)
-                        data = self.subject_h.sub(b'\r\n', data, count=1)
-                        data = self.references_h.sub(b'\r\n', data, count=1)
-                        data = self.inreplyto_h.sub(b'\r\n', data, count=1)
-                        # data = self.messageid_h.sub(b'\r\n', data, count=1)
+                            data = self.autocrypt_h.sub(b'\r\n', data, count=1)
+                            data = self.xmailer_h.sub(b'\r\n', data, count=1)
+                            data = self.subject_h.sub(b'\r\n', data, count=1)
+                            data = self.references_h.sub(b'\r\n', data, count=1)
+                            data = self.inreplyto_h.sub(b'\r\n', data, count=1)
+                            # data = self.messageid_h.sub(b'\r\n', data, count=1)
 
-                        m = self.to_h.search(data)
-                        if m:
-                            to = b'\r\nTo: '
-                            to += b', \r\n\t'.join(self.addr_field.sub(
-                                rb'\1', m[1]).split(b','))
-                            data = data[:m.start()] + to + \
-                                data[m.end():]
+                            m = self.to_h.search(data)
+                            if m:
+                                to = b'\r\nTo: '
+                                to += b', \r\n\t'.join(self.addr_field.sub(
+                                    rb'\1', m[1]).split(b','))
+                                data = data[:m.start()] + to + \
+                                    data[m.end():]
 
                     if data == b'QUIT\r\n':
                         self.request.sendall(b'2.0.0 Bye\r\n')
