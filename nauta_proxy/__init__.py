@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from time import sleep
 import argparse
 import imaplib
 import json
@@ -12,7 +13,7 @@ from .proxy import Proxy, SmtpHandler, ImapHandler, IMAP_SERVER
 
 
 __author__ = 'Asiel Díaz Benítez'
-__version__ = '0.9.0'
+__version__ = '0.10.0'
 
 
 def termux(cmd):
@@ -28,6 +29,16 @@ def start_proxy(proxy_port, handler, db):
         proxy.serve_forever()
     finally:
         proxy.server_close()
+
+
+def expunge_inbox(db):
+    while True:
+        if db.get_optimize():
+            try:
+                expunge_dc(db, 'INBOX')
+            except:
+                pass
+        sleep(60*30)
 
 
 def is_running():
@@ -51,15 +62,21 @@ def convert_bytes(amount):
 
 def get_stats(db):
     state = 'En Ejecución' if is_running() else 'Detenido'
-    mode = 'Lite' if db.get_optimize() else 'Normal'
+    mode = db.get_optimize()
+    if mode == 1:
+        mode = 'Lite'
+    elif mode == 2:
+        mode = 'Lite+'
+    else:
+        mode = 'Normal'
     text = 'Estado: {} ({})\n'.format(state, mode)
     text += 'Recibido: {:,} / {}\n'.format(
         db.get_imap_msgs(), convert_bytes(db.get_imap()))
     text += 'Enviado: {:,} / {}\n'.format(
         db.get_smtp_msgs(), convert_bytes(db.get_smtp()))
-    serv_msgs, serv_bytes = db.get_serverstats()
+    serv_msgs, serv_kb = db.get_serverstats()
     text += 'Servidor: {:,} / {}\n'.format(
-        serv_msgs, convert_bytes(serv_bytes))
+        serv_msgs, convert_bytes(serv_kb*1024))
     return text
 
 
@@ -71,6 +88,19 @@ def empty_dc(db, folder):
             resp = imap.select(folder)
             assert resp[0] == 'OK', resp[1]
             imap.store('1:*', '+FLAGS.SILENT', r'\Deleted')
+            imap.close()
+            quota = imap.getquotaroot('INBOX')
+        quota = quota[1][1][0].split(b'(')[1][:-1].split()
+        db.set_serverstats((int(quota[-2]), int(quota[1])))
+
+
+def expunge_dc(db, folder):
+    c = db.get_credentials()
+    if c:
+        with imaplib.IMAP4(*IMAP_SERVER) as imap:
+            imap.login(*c)
+            resp = imap.select(folder)
+            assert resp[0] == 'OK', resp[1]
             imap.close()
             quota = imap.getquotaroot('INBOX')
         quota = quota[1][1][0].split(b'(')[1][:-1].split()
@@ -101,6 +131,8 @@ def main():
                    action="store_true")
     p.add_argument("--empty", help="empty INBOX/DeltaChat folder or the given folder",
                    const="INBOX/DeltaChat", nargs='?')
+    p.add_argument("--expunge", help="expunge INBOX/DeltaChat folder or the given folder",
+                   const="INBOX/DeltaChat", nargs='?')
     p.add_argument("--notheaders", help="set headers to ignore, or print the current ignored headers if no argument is given",
                    const="", nargs='?')
     p.add_argument("-r", help="reset db", action="store_true")
@@ -114,39 +146,46 @@ def main():
     cmd = 'bash ~/.shortcuts/Nauta-Proxy -r'
 
     if args.options:
-        optimize = db.get_optimize()
+        optimize = (db.get_optimize()+1) % 3
+        modes = ['Modo Normal', 'Modo Lite', 'Modo Lite+']
         options = [
             'Detener Proxy',
             'Vaciar Carpeta...',
+            'Purgar Carpeta...',
             'Resetear Stats',
-            'Modo Normal' if optimize else 'Modo Lite',
+            modes[optimize],
             'Mostrar Stats',
             'Actualizar App']
         res = termux('termux-dialog sheet -v "{}"'.format(','.join(options)))
+        folders = [
+            'INBOX',
+            'INBOX/DeltaChat',
+            'DeltaChat',
+            'Trash',
+            'Sent',
+            'Drafts']
         if res['code'] == 0:
             if res['index'] == 0:
                 args.stop = True
             elif res['index'] == 1:
-                options = [
-                    'INBOX',
-                    'INBOX/DeltaChat',
-                    'DeltaChat',
-                    'Trash',
-                    'Sent',
-                    'Drafts']
                 res = termux(
-                    'termux-dialog sheet -v "{}"'.format(','.join(options)))
+                    'termux-dialog sheet -v "{}"'.format(','.join(folders)))
                 if res['code'] == 0:
-                    args.empty = options[res['index']]
+                    args.empty = folders[res['index']]
             elif res['index'] == 2:
-                args.r = True
+                res = termux(
+                    'termux-dialog sheet -v "{}"'.format(','.join(folders)))
+                if res['code'] == 0:
+                    args.expunge = folders[res['index']]
             elif res['index'] == 3:
-                args.mode = '0' if optimize else '1'
+                args.r = True
             elif res['index'] == 4:
+                args.mode = optimize
+            elif res['index'] == 5:
                 update_serverstats(db)
                 termux('termux-dialog confirm -t "{}" -i "{}"'.format(
                     'Nauta Proxy {}'.format(__version__), get_stats(db)))
-            elif res['index'] == 5:
+            elif res['index'] == 6:
                 args.upgrade = True
         else:
             args.options = False
@@ -167,6 +206,8 @@ def main():
         update_serverstats(db)
     elif args.empty:
         empty_dc(db, args.empty)
+    elif args.expunge:
+        expunge_dc(db, args.expunge)
     elif args.notheaders is not None:
         if args.notheaders:
             args.notheaders = args.notheaders.upper()
@@ -177,7 +218,7 @@ def main():
         else:
             print(db.get_ignoredheaders())
     elif args.mode is not None:
-        db.set_optimize(args.mode == '1')
+        db.set_optimize(int(args.mode))
     elif args.log is not None:
         db.set_savelog(args.log == '1')
     elif args.upgrade:
@@ -188,6 +229,8 @@ def main():
             8081, SmtpHandler, db)).start()
         threading.Thread(target=start_proxy, args=(
             8082, ImapHandler, db)).start()
+        threading.Thread(
+            target=expunge_inbox, args=(db,), daemon=True).start()
 
     if args.options:
         os.system(cmd)

@@ -1,6 +1,14 @@
 Changelog
 *********
 
+0.10.0
+------
+- fixed server stats, script was expecting bytes but server was sending KB
+- added option to expunge a folder, to help purge folders with the new auto-delete feature in DC clients
+- added auto-expunge inbox periodically
+- added new mode "Lite+" that removes the "Chat-Version" header from outgoing messages
+
+
 0.9.0
 -----
 - better code organization
@@ -10,14 +18,17 @@ Changelog
 - added option to upgrade app without havig to use the command line
 - refresh other stats before starting to check server stats
 
+
 0.8.0
 -----
 - **Chat-Version** header is not added to classic emails anymore
 - mailing lists are not displayed anymore
 
+
 0.7.1
 -----
 - fix bug when receiving classic emails. `ffe0318`_
+
 
 0.7.0
 -----

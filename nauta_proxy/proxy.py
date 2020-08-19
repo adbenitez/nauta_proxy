@@ -94,6 +94,7 @@ class SmtpHandler(RequestHandler):
     real_server = SMTP_SERVER
 
     autocrypt_h = re.compile(rb'\r\nAutocrypt: (.|\n)+?\r\n(?!\t)')
+    chatversion_h = re.compile(rb'\r\nChat-Version: (.|\n)+?\r\n(?!\t)')
     xmailer_h = re.compile(rb'\r\nX-Mailer: (.|\n)+?\r\n(?!\t)')
     subject_h = re.compile(rb'\r\nSubject: (.|\n)+?\r\n(?!\t)')
     references_h = re.compile(rb'\r\nReferences: (.|\n)+?\r\n(?!\t)')
@@ -129,6 +130,8 @@ class SmtpHandler(RequestHandler):
                                 data += d
                             data = self.autocrypt_h.sub(b'\r\n', data, count=1)
                             data = self.xmailer_h.sub(b'\r\n', data, count=1)
+                            if db.get_optimize() == 2:
+                                data = self.chatversion_h.sub(b'\r\n', data, count=1)
                             data = self.subject_h.sub(b'\r\n', data, count=1)
                             data = self.references_h.sub(b'\r\n', data, count=1)
                             data = self.inreplyto_h.sub(b'\r\n', data, count=1)

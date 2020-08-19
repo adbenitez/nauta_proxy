@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sys
 
 from . import __name__ as appname, main

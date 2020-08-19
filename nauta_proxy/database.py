@@ -63,8 +63,9 @@ class DBManager:
             'UPDATE stats SET value=? WHERE key="serverstats"', (val,))
 
     def get_credentials(self):
-        r = self.db.execute('SELECT value FROM stats WHERE key="credentials"')
-        return r.fetchone()[0].split(' ', maxsplit=1)
+        r = self.db.execute(
+            'SELECT value FROM stats WHERE key="credentials"').fetchone()
+        return r and r[0].split(' ', maxsplit=1)
 
     def set_credentials(self, val):
         val = ' '.join(map(lambda v: v.decode(), val))
@@ -90,11 +91,11 @@ class DBManager:
             'UPDATE stats SET value=? WHERE key="stop"', (val,))
 
     def get_optimize(self):
-        r = self.db.execute('SELECT value FROM stats WHERE key="optimize"')
-        return r.fetchone()[0] == "1"
+        r = self.db.execute(
+            'SELECT value FROM stats WHERE key="optimize"').fetchone()
+        return int(r[0])
 
     def set_optimize(self, val):
-        val = 1 if val else 0
         self.execute(
             'UPDATE stats SET value=? WHERE key="optimize"', (val,))
 
